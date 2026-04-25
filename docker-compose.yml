@@ -1,0 +1,60 @@
+services:
+  ros-noetic:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # These match your host user so file permissions stay sane.
+        # Set by run.sh; defaults to 1000 if you invoke docker compose directly.
+        USER_UID: "${HOST_UID:-1000}"
+        USER_GID: "${HOST_GID:-1000}"
+    image: ros-noetic-gazebo:latest
+    container_name: ros-noetic-gazebo
+    hostname: ros-noetic
+    stdin_open: true   # docker run -i
+    tty: true          # docker run -t
+    network_mode: host # easiest for ROS; all ports shared with host
+
+    # ----- GUI: X11 forwarding via host socket --------------------------------
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=/tmp/.docker.xauth
+      - LIBGL_ALWAYS_INDIRECT=0
+      # Force Mesa software fallback only if DRI passthrough fails (leave commented)
+      # - LIBGL_ALWAYS_SOFTWARE=1
+      - XDG_RUNTIME_DIR=/tmp/runtime-rosdev
+
+    volumes:
+      # X11 socket
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /tmp/.docker.xauth:/tmp/.docker.xauth:rw
+      # Your catkin workspace, persisted on the host
+      - ./catkin_ws:/home/rosdev/catkin_ws
+      # Optional: persist bash history + gazebo cache across container restarts
+      - ./.cache/bash_history:/home/rosdev/.bash_history
+      - ./.cache/gazebo:/home/rosdev/.gazebo
+      - ./.cache/ros:/home/rosdev/.ros
+      # dbus (some rqt plugins want it)
+      - /run/dbus:/run/dbus:ro
+
+    # ----- Intel iGPU passthrough (DRI render node) --------------------------
+    # /dev/dri gives the container access to your Intel GPU for hardware-accelerated
+    # OpenGL via Mesa. Without this, Gazebo falls back to llvmpipe (slow software render).
+    devices:
+      - /dev/dri:/dev/dri
+
+    # Some systems need these capabilities for hardware GL + joystick devices
+    group_add:
+      - video
+      - render
+
+    # Joystick passthrough (ignored if you don't have one plugged in)
+    # Uncomment if you use a gamepad for teleop:
+    # - /dev/input:/dev/input
+
+    # Keep container running so `docker compose up -d` works cleanly
+    restart: unless-stopped
+
+    # Generous shm size — Gazebo + RViz appreciate it
+    shm_size: "1gb"

@@ -1,0 +1,510 @@
+============================================================================
+ROS NOETIC + GAZEBO 11 CONTAINER — COMMAND REFERENCE
+============================================================================
+Project: ~/ros-noetic-gazebo/
+Container name: ros-noetic-gazebo
+In-container user: rosdev
+Host: Ubuntu 22.04, Intel Alder Lake-P GPU (PCI 0xa721)
+============================================================================
+
+
+############################################################################
+# 1. CONTAINER LIFECYCLE (run from host, in ~/ros-noetic-gazebo/)
+############################################################################
+
+# Build the image (first time, or after editing Dockerfile)
+./run.sh build
+
+# Force a clean rebuild ignoring all caches
+./run.sh rebuild
+
+# Start the container in the background
+./run.sh up
+
+# Open a bash shell inside the running container
+# (open multiple host terminals and run this in each for parallel shells)
+./run.sh shell
+
+# Check whether the container is running
+./run.sh status
+
+# Tail the container's logs
+./run.sh logs
+
+# Stop the container (state preserved, can be restarted)
+./run.sh stop
+
+# Stop AND remove the container (image is kept, workspace files persist)
+./run.sh down
+
+
+############################################################################
+# 2. HOST-SIDE TROUBLESHOOTING (rare; fixes for common gotchas)
+############################################################################
+
+# X11 connection refused — re-allow docker to reach host's X server
+xhost +local:docker
+
+# /tmp/.docker.xauth got created as root-owned or as a directory by mistake
+sudo rm -rf /tmp/.docker.xauth
+
+# Check Docker is runnable without sudo
+docker ps
+
+# If the above failed, add yourself to docker group (one-time)
+sudo usermod -aG docker $USER
+newgrp docker      # or log out + back in
+
+# Free disk space — list dangling images/containers
+docker system df
+
+# Reclaim space from old images and stopped containers
+docker system prune
+
+# Nuclear option: remove this image entirely (frees ~6 GB)
+docker rmi ros-noetic-gazebo:latest
+
+# See current host-mounted Mesa drivers (should exist for GPU acceleration)
+ls /usr/lib/x86_64-linux-gnu/dri/iris_dri.so
+ls /usr/lib/x86_64-linux-gnu/libGL.so.1
+
+
+############################################################################
+# 3. INSIDE-CONTAINER SANITY CHECKS
+############################################################################
+
+# Confirm ROS environment
+echo $ROS_DISTRO                      # → noetic
+which roscore                         # → /opt/ros/noetic/bin/roscore
+rosversion -d                         # → noetic
+
+# Confirm GPU acceleration (Mesa Intel — NOT llvmpipe — means it's working)
+glxinfo | grep "OpenGL renderer"
+
+# Visual GPU smoke test (small spinning gears window)
+glxgears
+
+# Confirm user identity
+id                                    # uid=1000(rosdev)
+
+# List installed ROS packages
+rospack list | wc -l                  # how many
+apt list --installed 2>/dev/null | grep ros-noetic | wc -l
+
+
+############################################################################
+# 4. ROS — CORE WORKFLOW
+############################################################################
+
+# Start the ROS master (needed before nodes can run)
+roscore                               # foreground
+roscore &                             # background
+
+# In another shell — list active topics, services, nodes
+rostopic list
+rosservice list
+rosnode list
+
+# Inspect a topic (rate, type, content)
+rostopic info /cmd_vel
+rostopic hz /cmd_vel
+rostopic echo /cmd_vel
+
+# Publish a one-off message to a topic
+rostopic pub /cmd_vel geometry_msgs/Twist "linear:
+  x: 0.5" -1                          # -1 means publish once
+
+# Call a service
+rosservice call /gazebo/reset_world
+
+# Inspect TF (transform tree)
+rosrun tf view_frames                 # generates frames.pdf in current dir
+rosrun tf2_tools view_frames.py
+rosrun tf tf_echo source_frame target_frame
+
+# View the node graph live
+rqt_graph
+
+# Multi-purpose ROS GUI (plots, parameter editor, image viewer, etc.)
+rqt
+
+
+############################################################################
+# 5. CATKIN WORKSPACE — BUILD & SOURCE
+############################################################################
+
+# Workspace location: ~/catkin_ws/ (bind-mounted from host ./catkin_ws/)
+# Edit packages on the host with any editor; build inside the container.
+
+cd ~/catkin_ws
+
+# Install all rosdep dependencies for packages in src/
+rosdep install --from-paths src --ignore-src -r -y
+
+# Build using catkin_tools (preferred — parallel, isolated builds)
+catkin build                          # build everything
+catkin build my_package               # build one package
+catkin build --no-deps my_package     # skip rebuilding deps
+catkin clean                          # remove build/devel/install dirs
+catkin clean my_package               # clean one package
+
+# Or use legacy catkin_make (single CMake project)
+catkin_make
+catkin_make --only-pkg-with-deps my_package
+
+# After building, source the workspace (auto-sourced in new shells via .bashrc)
+source devel/setup.bash
+
+# Create a new package
+cd ~/catkin_ws/src
+catkin_create_pkg my_package roscpp rospy std_msgs    # C++/Python pkg
+
+# Find a package's location
+rospack find my_package
+roscd my_package                      # cd into it
+
+
+############################################################################
+# 6. ROSLAUNCH — RUNNING LAUNCH FILES
+############################################################################
+
+# Run a launch file
+roslaunch <package> <launchfile>.launch
+
+# Pass arguments to a launch file
+roslaunch my_package sim.launch world_name:=my_world
+
+# Launch with debug output
+roslaunch --screen my_package sim.launch
+
+# Validate a launch file without running
+roslaunch --nodes my_package sim.launch    # list what would run
+
+# See what arguments a launch file accepts
+roslaunch my_package sim.launch --ros-args
+
+
+############################################################################
+# 7. GAZEBO — SIMULATION
+############################################################################
+
+# Launch an empty world (basic test)
+roslaunch gazebo_ros empty_world.launch
+
+# Launch with a custom world file
+roslaunch gazebo_ros empty_world.launch world_name:=$(rospack find my_pkg)/worlds/my.world
+
+# Pre-built demo worlds that ship with Gazebo
+roslaunch gazebo_ros willowgarage_world.launch
+roslaunch gazebo_ros mud_world.launch
+
+# Run gazebo without ROS integration (rare; for testing pure Gazebo)
+gazebo                                # full GUI
+gzserver                              # headless physics only
+gzclient                              # GUI only (connects to running gzserver)
+
+# Spawn a URDF model into running Gazebo
+rosrun gazebo_ros spawn_model -urdf -file robot.urdf -model my_robot -x 0 -y 0 -z 0.1
+
+# Spawn from a parameter on the parameter server (most common pattern)
+rosrun gazebo_ros spawn_model -urdf -param robot_description -model my_robot
+
+# Pause / unpause simulation
+rosservice call /gazebo/pause_physics
+rosservice call /gazebo/unpause_physics
+
+# Reset world or simulation
+rosservice call /gazebo/reset_world      # objects to start positions, time keeps going
+rosservice call /gazebo/reset_simulation # also resets sim time to zero
+
+# Get / set model state programmatically
+rosservice call /gazebo/get_model_state "model_name: 'my_robot'"
+rosservice call /gazebo/set_model_state ...
+
+# Useful Gazebo env vars
+echo $GAZEBO_MODEL_PATH               # where Gazebo looks for models
+echo $GAZEBO_RESOURCE_PATH            # where it looks for textures/meshes
+
+
+############################################################################
+# 8. RVIZ — VISUALIZATION
+############################################################################
+
+# Start RViz (needs roscore running)
+rviz
+
+# Start RViz with a saved config
+rviz -d $(rospack find my_pkg)/config/my_view.rviz
+
+# In RViz GUI:
+#   File → Save Config As ... → save the layout for next time
+#   Add → By topic / By display type → pick what to visualize
+
+
+############################################################################
+# 9. URDF / XACRO — ROBOT MODELS
+############################################################################
+
+# Validate a URDF file
+check_urdf my_robot.urdf
+
+# Visualize a URDF tree as a PDF/graph
+urdf_to_graphiz my_robot.urdf
+
+# Convert xacro to URDF
+xacro my_robot.xacro > my_robot.urdf
+xacro my_robot.xacro arg1:=value > my_robot.urdf
+
+# Display URDF in RViz with joint sliders (great for debugging)
+roslaunch urdf_tutorial display.launch model:=my_robot.urdf
+
+
+############################################################################
+# 10. TELEOP — DRIVING ROBOTS BY KEYBOARD / JOYSTICK
+############################################################################
+
+# Keyboard control (publishes to /cmd_vel by default)
+rosrun teleop_twist_keyboard teleop_twist_keyboard.py
+
+# Remap to a different topic
+rosrun teleop_twist_keyboard teleop_twist_keyboard.py /cmd_vel:=/robot/cmd_vel
+
+# Joystick (requires gamepad plugged in and /dev/input passthrough enabled
+# in docker-compose.yml — uncomment that line and recreate the container)
+roslaunch teleop_twist_joy teleop.launch joy_config:=xbox
+
+
+############################################################################
+# 11. NAVIGATION STACK
+############################################################################
+
+# Start a navigation launch (your robot's own launch file usually)
+roslaunch my_robot_navigation move_base.launch
+
+# SLAM with gmapping (build a map while driving)
+rosrun gmapping slam_gmapping scan:=/scan _odom_frame:=odom
+
+# SLAM with slam_toolbox (modern alternative)
+roslaunch slam_toolbox online_async_launch.py
+
+# Save the map after SLAM
+rosrun map_server map_saver -f ~/catkin_ws/maps/my_map
+
+# Load a map (in a launch file usually)
+rosrun map_server map_server my_map.yaml
+
+# Localize on a known map
+rosrun amcl amcl scan:=/scan
+
+
+############################################################################
+# 12. MOVEIT — MANIPULATION
+############################################################################
+
+# Setup assistant — creates a moveit_config package for your robot
+roslaunch moveit_setup_assistant setup_assistant.launch
+
+# Demo a configured robot in RViz
+roslaunch <my_robot>_moveit_config demo.launch
+
+# Demo with Gazebo simulation backend
+roslaunch <my_robot>_moveit_config demo_gazebo.launch
+
+
+############################################################################
+# 13. ROSBAG — RECORDING & REPLAYING DATA
+############################################################################
+
+# Record all topics (creates a .bag file in current dir)
+rosbag record -a
+
+# Record specific topics
+rosbag record /cmd_vel /odom /scan -O my_run.bag
+
+# Inspect a recorded bag
+rosbag info my_run.bag
+
+# Replay a bag (publishes recorded messages back onto topics)
+rosbag play my_run.bag
+rosbag play -r 2.0 my_run.bag         # 2x speed
+rosbag play --clock my_run.bag        # also publish /clock for sim_time
+rosbag play -l my_run.bag             # loop
+
+
+############################################################################
+# 14. PARAMETER SERVER
+############################################################################
+
+# List, get, set parameters
+rosparam list
+rosparam get /my_param
+rosparam set /my_param 3.14
+
+# Load/save the entire param tree
+rosparam dump params.yaml
+rosparam load params.yaml
+
+# Delete a param
+rosparam delete /my_param
+
+
+############################################################################
+# 15. INSTALLING NEW PACKAGES (inside container)
+############################################################################
+
+# Install a ROS package via apt (sudo has no password)
+sudo apt update
+sudo apt install ros-noetic-<package-name>
+
+# Common useful additions:
+sudo apt install ros-noetic-turtlebot3 ros-noetic-turtlebot3-simulations
+sudo apt install ros-noetic-ros-control ros-noetic-ros-controllers
+sudo apt install ros-noetic-realsense2-camera
+sudo apt install ros-noetic-velodyne-simulator
+
+# Search for a package
+apt search ros-noetic-<keyword>
+apt-cache search ros-noetic-
+
+# To make installs PERMANENT across container rebuilds, add the package to
+# the Dockerfile's "Extras" RUN block, then: ./run.sh rebuild
+
+# pip3 inside the container (user-local — no sudo)
+pip3 install --user <package>
+
+
+############################################################################
+# 16. EDITING & DEVELOPMENT FROM HOST
+############################################################################
+
+# The catkin_ws is bind-mounted, so edit on the HOST with any editor:
+code ~/ros-noetic-gazebo/catkin_ws            # VS Code
+nautilus ~/ros-noetic-gazebo/catkin_ws        # file manager
+cd ~/ros-noetic-gazebo/catkin_ws/src && git clone <repo>
+
+# Build inside the container (in another shell):
+./run.sh shell
+cd ~/catkin_ws && catkin build
+
+
+############################################################################
+# 17. TURTLEBOT3 QUICK START (good for testing the whole stack)
+############################################################################
+
+# One-time install:
+sudo apt update
+sudo apt install -y ros-noetic-turtlebot3 ros-noetic-turtlebot3-simulations \
+                    ros-noetic-turtlebot3-gazebo ros-noetic-turtlebot3-navigation \
+                    ros-noetic-turtlebot3-slam
+echo "export TURTLEBOT3_MODEL=burger" >> ~/.bashrc
+source ~/.bashrc
+
+# Spawn TurtleBot3 in Gazebo
+roslaunch turtlebot3_gazebo turtlebot3_world.launch
+
+# In another shell — drive it with keyboard
+roslaunch turtlebot3_teleop turtlebot3_teleop_key.launch
+
+# In another shell — visualize in RViz
+roslaunch turtlebot3_gazebo turtlebot3_gazebo_rviz.launch
+
+# Build a map with SLAM (run while driving with the keyboard teleop)
+roslaunch turtlebot3_slam turtlebot3_slam.launch slam_methods:=gmapping
+
+# Save the map
+rosrun map_server map_saver -f ~/catkin_ws/maps/turtlebot3_map
+
+# Navigation on the saved map
+roslaunch turtlebot3_navigation turtlebot3_navigation.launch \
+    map_file:=$HOME/catkin_ws/maps/turtlebot3_map.yaml
+
+
+############################################################################
+# 18. PROCESS / SIGNAL CHEATSHEET
+############################################################################
+
+# Kill all ROS processes (when something hangs)
+killall roscore rosmaster rosout
+killall -9 gzserver gzclient
+
+# Kill a specific node by name
+rosnode kill /node_name
+
+# Find what's listening on the ROS port
+sudo lsof -i :11311                   # on host
+ss -tlnp | grep 11311                 # inside container
+
+# Background a foreground command, then bring it back / detach
+some_command &           # start in background
+jobs                     # list backgrounded
+fg                       # bring last to foreground
+bg                       # resume in background
+disown %1                # detach from this shell
+
+
+############################################################################
+# 19. ENVIRONMENT VARIABLES (already auto-set in this container)
+############################################################################
+
+# All the below are already in ~/.bashrc inside the container:
+echo $ROS_DISTRO              # noetic
+echo $ROS_MASTER_URI          # http://localhost:11311
+echo $ROS_HOSTNAME            # localhost
+echo $GAZEBO_MODEL_PATH       # includes catkin_ws/src
+echo $LD_LIBRARY_PATH         # includes /opt/host-mesa/* for GPU
+echo $LIBGL_DRIVERS_PATH      # /opt/host-mesa/lib/x86_64-linux-gnu/dri
+
+# To talk to a ROS master on another machine on your LAN:
+export ROS_MASTER_URI=http://<other-machine-ip>:11311
+export ROS_IP=<this-machine-ip>
+
+
+############################################################################
+# 20. GETTING UNSTUCK
+############################################################################
+
+# Gazebo is black / extremely slow:
+#   Inside container: glxinfo | grep "OpenGL renderer"
+#   If "llvmpipe" — host Mesa bind-mount isn't picking up.
+#   Verify host paths: ls /usr/lib/x86_64-linux-gnu/dri/iris_dri.so
+#   As a quick fallback, edit docker-compose.yml and uncomment:
+#     - LIBGL_ALWAYS_SOFTWARE=1
+#   Then: ./run.sh down && ./run.sh up
+
+# RViz crashes on startup:
+#   Try: export QT_X11_NO_MITSHM=1 (already set in compose)
+#   Or run with: rviz --ogre-log-path=/tmp/ogre.log
+#   Check: cat /tmp/ogre.log
+
+# "cannot connect to display":
+#   On host: xhost +local:docker
+
+# Container won't start, "port 11311 already allocated":
+#   Some other roscore is running on host. Kill it:
+#   killall roscore rosmaster
+
+# Permissions errors on catkin_ws files:
+#   Probably a previous sudo run. On host:
+#   sudo chown -R $USER:$USER ~/ros-noetic-gazebo/
+
+# Workspace builds locally but `roslaunch my_pkg foo.launch` says
+# "package not found":
+#   Source the workspace (new shells do this automatically):
+#   source ~/catkin_ws/devel/setup.bash
+#   Or in fresh shell: ./run.sh shell  (auto-sources via .bashrc)
+
+
+############################################################################
+# 21. DOCS & LEARNING (open in host browser)
+############################################################################
+
+# ROS Noetic main wiki:    http://wiki.ros.org/noetic
+# Tutorials index:         http://wiki.ros.org/ROS/Tutorials
+# Gazebo tutorials:        https://classic.gazebosim.org/tutorials
+# MoveIt tutorials:        https://ros-planning.github.io/moveit_tutorials/
+# Navigation tutorials:    http://wiki.ros.org/navigation/Tutorials
+# TurtleBot3 manual:       https://emanual.robotis.com/docs/en/platform/turtlebot3/
+
+============================================================================
+END OF REFERENCE
+============================================================================

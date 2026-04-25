@@ -1,0 +1,27 @@
+# ============================================================================
+# .gitignore — only the container scaffolding is public.
+# Workspace contents and runtime caches stay local.
+# ============================================================================
+
+# ----- The entire catkin workspace (including any cloned ROS packages) ------
+# This is the key line: nothing inside catkin_ws/ ever goes to GitHub.
+# Cloned repos in catkin_ws/src/ keep their own .git/ and live their own life.
+catkin_ws/
+
+# ----- Runtime caches (Gazebo models, ROS logs, bash history) --------------
+.cache/
+
+# ----- Editor / IDE / OS junk -----------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ----- Local-only override files (so you can have personal compose tweaks
+#       without committing them) --------------------------------------------
+docker-compose.override.yml
+.env.local
+*.local
